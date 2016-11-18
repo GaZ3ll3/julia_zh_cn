@@ -3,20 +3,25 @@
 ************************
  调用 C 和 Fortran 代码
 ************************
+尽管大多数的代码都可以用 Julia 来实现， 但是目前很多成熟的数值计算库是用 C 和 Fortran 实现的。 为了方便地使用这些已有的代码， Julia 可以简单高效地调用 C 和 Fortran 函数。 在Julia 里， 使用 :func:`ccall` 可以像对待普通的函数一样来调用 C 和 Fortran 代码。
 
-Julia 调用 C 和 Fortran 的函数，既简单又高效。
-
-被调用的代码应该是共享库的格式。大多数 C 和 Fortran 库都已经被编译为共享库。如果自己使用 GCC （或 Clang ）编译代码，需要添加 ``-shared`` 和 ``-fPIC`` 选项。Julia 调用这些库的开销与本地 C 语言相同。
+被调用的代码应该是共享库的格式。大多数 C 和 Fortran 库都已经被编译为共享库。如果自己使用 GCC （或 Clang ）编译代码，需要添加 ``-shared`` 和 ``-fPIC`` 选项。 因为由 JIT 生成的机器指令和本地的 C 语言的一样， 所以 Julia 调用这些库的开销与本地 C 语言相同。 
 
 调用共享库和函数时使用多元组形式： ``(:function, "library")`` 或 ``("function", "library")`` ，其中 ``function`` 是 C 的导出函数名， ``library`` 是共享库名。共享库依据名字来解析，路径由环境变量来确定，有时需要直接指明。
 
 多元组内有时仅有函数名（仅 ``:function`` 或 ``"function"`` ）。此时，函数名由当前进程解析。这种形式可以用来调用 C 库函数， Julia 运行时函数，及链接到 Julia 的应用中的函数。
 
-使用 ``ccall`` 来生成库函数调用。 ``ccall`` 的参数如下:
+默认情况下， Fortran 编译器 `会进行名字修饰
+<https://en.wikipedia.org/wiki/Name_mangling#Fortran>`_
+(例如, 将函数名改为小写或大写, 经常会加一个下划线)， 所以在用 :func:`ccall` 调用 Fortran 函数时必须将修饰过的函数名传递进去。 并且， 调用 Fortran 函数时，所有的输入都必须通过引用来传递。
 
-1. (:function, "library") 多元组对儿（必须为常量，详见下面）
-2. 返回类型，可以为任意的位类型，包括 ``Int32`` ， ``Int64`` ， ``Float64`` ，或者指向任意类型参数 ``T`` 的指针 ``Ptr{T}`` ，或者仅仅是指向无类型指针 ``void*`` 的 ``Ptr``
-3. 输入的类型的多元组，与上述的返回类型的要求类似。输入必须是多元组，而不是值为多元组的变量或表达式
+最后， 可以使用 ``ccall`` 来生成库函数调用。 ``ccall`` 的参数如下:
+
+1. (:function, "library") 多元组对儿（必须为常量，详见下面）。
+2. 返回类型 (参见下面的表格对应 声明的 C 类型到 Julia)
+    - 这个参数会在编译时被处理。
+3. 输入的类型的多元组，与上述的返回类型的要求类似。 输入必须是多元组，而不是值为多元组的变量或表达式。
+    - 这个参数会在编译是被处理。
 4. 后面的参数，如果有的话，都是被调用函数的实参
 
 下例调用标准 C 库中的 ``clock`` ： ::
@@ -38,23 +43,23 @@ Julia 调用 C 和 Fortran 的函数，既简单又高效。
     julia> bytestring(path)
     "/bin/bash"
 
-注意，类型多元组的参数必须写成 ``(Ptr{Uint8},)`` ，而不是 ``(Ptr{Uint8})`` 。这是因为 ``(Ptr{Uint8})`` 等价于 ``Ptr{Uint8}`` ，它并不是一个包含 ``Ptr{Uint8}`` 的一元多元组： ::
+注意，类型多元组的参数必须写成 ``(Cstring,)`` ，而不是 ``(Cstring)`` 。这是因为 ``(Cstring)`` 等价于 ``Cstring`` ，它并不是一个包含 ``(Cstring)`` 的一元多元组： ::
 
-    julia> (Ptr{Uint8})
-    Ptr{Uint8}
+    julia> (Cstring)
+    Cstring
 
-    julia> (Ptr{Uint8},)
-    (Ptr{Uint8},)
+    julia> (Cstring,)
+    (Cstring,)
 
 实际中要提供可复用代码时，通常要使用 Julia 的函数来封装 ``ccall`` ，设置参数，然后检查 C 或 Fortran 函数中可能出现的任何错误，将其作为异常传递给 Julia 的函数调用者。下例中， ``getenv`` C 库函数被封装在 `env.jl <https://github.com/JuliaLang/julia/blob/master/base/env.jl>`_ 里的 Julia 函数中： ::
 
-    function getenv(var::String)
-      val = ccall( (:getenv, "libc"),
-                  Ptr{Uint8}, (Ptr{Uint8},), var)
+    function getenv(var::AbstractString)
+      val = ccall((:getenv, "libc"),
+                  Cstring, (Cstring,), var)
       if val == C_NULL
         error("getenv: undefined variable: ", var)
       end
-      bytestring(val)
+      unsafe_string(val)
     end
 
 上例中，如果函数调用者试图读取一个不存在的环境变量，封装将抛出异常： ::
@@ -77,109 +82,249 @@ Julia 调用 C 和 Fortran 的函数，既简单又高效。
 
 此例先分配出一个字节数组，然后调用 C 库函数 ``gethostname`` 向数组中填充主机名，取得指向主机名缓冲区的指针，在默认其为空结尾 C 字符串的前提下，将其转换为 Julia 字符串。 C 库函数一般都用这种方式从函数调用者那儿，将申请的内存传递给被调用者，然后填充。在 Julia 中分配内存，通常都需要通过构建非初始化数组，然后将指向数据的指针传递给 C 函数。
 
-调用 Fortran 函数时，所有的输入都必须通过引用来传递。
+创建 C 兼容的 Julia 函数指针
+---------------------
 
-``&`` 前缀说明传递的是指向标量参数的指针，而不是标量值本身。下例使用 BLAS 函数计算点积：
+可以把 Julia 函数传递给本地的接受函数指针为输入的 C 函数。 比如， ::
 
-::
+    typedef returntype (*functiontype)(argumenttype,...)
+   
+函数 :func:`cfunction` 会生成对应的 C 兼容的函数指针来调用 Julia 的库函数。
 
-    function compute_dot(DX::Vector{Float64}, DY::Vector{Float64})
-      assert(length(DX) == length(DY))
-      n = length(DX)
-      incx = incy = 1
-      product = ccall( (:ddot_, "libLAPACK"),
-                      Float64,
-                      (Ptr{Int32}, Ptr{Float64}, Ptr{Int32}, Ptr{Float64}, Ptr{Int32}),
-                      &n, DX, &incx, DY, &incy)
-      return product
+:func:`cfunction` 的参数形式如下 :
+
+1. 一个 Julia 函数
+2. 返回类型
+3. 输入的类型的多元组
+
+一个经典的例子就是 C 标准库的 ``qsort``， 声明为::
+
+    void qsort(void *base, size_t nmemb, size_t size,
+               int(*compare)(const void *a, const void *b));
+   
+``base`` 是长度为 ``nmemb`` 数组指针， 所有的元素都是 ``size`` 字节， ``compare`` 是一个回调函数， 其输入为两个指针， 返回为一个小于/大于零的整数。 假设我们有一个 Julia 里的一维数组 ``A``， 希望调用 ``qsort`` 进行排序(而不是用 Julia 内部的 ``sort`` 函数)。 我们得先写一个关于任意类型 T 的比较函数:: 
+
+    function mycompare{T}(a::T, b::T)
+        return convert(Cint, a < b ? -1 : a > b ? +1 : 0)::Cint
     end
+    
+注意， 我们必须仔细处理返回类型: ``qsort`` 需要函数返回一个 C ``int``， 所以我们需要用 ``convert`` 和 ``typeassert`` 保证返回的是一个 ``Cint``。
 
-前缀 ``&`` 的意思与 C 中的不同。对引用的变量的任何更改，都是对 Julia 不可见的。 ``&`` 并不是真正的地址运算符，可以在任何语法中使用它，例如 ``&0`` 和 ``&f(x)`` 。
+为了将这个函数传递到 C， 我们还需用 ``cfunction`` 得到它的地址::
 
-注意在处理过程中，C 的头文件可以放在任何地方。目前还不能将 Julia 的结构和其他非基础类型传递给 C 库。通过传递指针来生成、使用非透明结构类型的 C 函数，可以向 Julia 返回 ``Ptr{Void}`` 类型的值，这个值以 ``Ptr{Void}`` 的形式被其它 C 函数调用。可以像任何 C 程序一样，通过调用库中对应的程序，对对象进行内存分配和释放。
+    const mycompare_c = cfunction(mycompare, Cint, (Ref{Cdouble}, Ref{Cdouble}))
+    
+:func:`cfunction` 要接受三个参数: Julia 函数 (``mycompare``),
+返回类型 (``Cint``), and 参数类型的多元组, 来对元素为 ``Cdouble`` (``Float64``) 的数组进行排序。
+
+最终调用 ``qsort`` 如下::
+
+    A = [1.3, -2.7, 4.4, 3.1]
+    ccall(:qsort, Void, (Ptr{Cdouble}, Csize_t, Csize_t, Ptr{Void}),
+          A, length(A), sizeof(eltype(A)), mycompare_c)
+          
+运行后， ``A`` 变成有序的数组 ``[-2.7, 1.3, 3.1, 4.4]``。 注意， Julia 可以转换数组到 ``Ptr{Cdouble}``，
+可以计算一种类型的大小 (和 C 里的 ``sizeof`` 一致)。 有意思的是， 将 ``println("mycompare($a,$b)")`` 写到 
+``mycompare`` 里可以打印出 ``qsort`` 进行的所有比较。
 
 把 C 类型映射到 Julia
----------------------
+--------------------
+
+在 Julia 里， 正确地匹配 C 类型很重要， 不一致的类型会导致在一个系统下正确的代码在另一个系统下发生错误。
+
+注意， 调用 C 函数时， C 头文件是不需要的: 你需要保证 Julia 类型和函数签名和头文件里的一致。
+
+自动转换
+~~~~~~~~~
 
 Julia 自动调用 ``convert`` 函数，将参数转换为指定类型。例如： ::
 
-    ccall( (:foo, "libfoo"), Void, (Int32, Float64),
-          x, y)
+    ccall( (:foo, "libfoo"), Void, (Int32, Float64), x, y)
 
 会按如下操作： ::
 
-    ccall( (:foo, "libfoo"), Void, (Int32, Float64),
-          convert(Int32, x), convert(Float64, y))
+    ccall((:foo, "libfoo"), Void, (Int32, Float64),
+          Base.unsafe_convert(Int32, Base.cconvert(Int32, x)),
+          Base.unsafe_convert(Float64, Base.cconvert(Float64, y)))
+         
+:func:`cconvert` 会正常调用 :func:`convert`, 但也可以被定义返回更合适的类型来传递给 C. 例如， 
+将一个数组 (比如字符串数组) 转换为指针数组。
 
-如果标量值与 ``&`` 一起被传递作为 ``Ptr{T}`` 类型的参数时，值首先会被转换为 ``T`` 类型。
+:func:`unsafe_convert` 处理转换为 ``Ptr`` 类型的情况. 它被称作不安全因为将对象转换为指针后会对垃圾回收隐藏起来， 导致过早地被释放。
 
-数组转换
+类型对应
 ~~~~~~~~
+First, a review of some relevant Julia type terminology:
 
-把数组作为一个 ``Ptr{T}`` 参数传递给 C 时，它不进行转换。Julia 仅检查元素类型是否为 ``T`` ，然后传递首元素的地址。这样做可以避免不必要的复制整个数组。
+.. rst-class:: text-wrap
 
-因此，如果 ``Array`` 中的数据格式不对时，要使用显式转换，如 ``int32(a)`` 。
+==============================  ==============================  ======================================================
+Syntax / Keyword                Example                         Description
+==============================  ==============================  ======================================================
+``type``                        ``String``                      "Leaf Type" :: A group of related data that includes
+                                                                a type-tag, is managed by the Julia GC, and
+                                                                is defined by object-identity.
+                                                                The type parameters of a leaf type must be fully defined
+                                                                (no ``TypeVars`` are allowed)
+                                                                in order for the instance to be constructed.
 
-如果想把数组 *不经转换* 而作为一个不同类型的指针传递时，要么声明参数为 ``Ptr{Void}`` 类型，要么显式调用 ``convert(Ptr{T}, pointer(A))`` 。
+``abstract``                    ``Any``,                        "Super Type" :: A super-type (not a leaf-type)
+                                ``AbstractArray{T,N}``,         that cannot be instantiated, but can be used to
+                                ``Complex{T}``                  describe a group of types.
 
-类型相关
-~~~~~~~~
+``{T}``                         ``Vector{Int}``                 "Type Parameter" :: A specialization of a type
+                                                                (typically used for dispatch or storage optimization).
+
+                                                                "TypeVar" :: The ``T`` in the type parameter declaration
+                                                                is referred to as a TypeVar (short for type variable).
+
+``bitstype``                    ``Int``,                        "Bits Type" :: A type with no fields, but a size. It
+                                ``Float64``                     is stored and defined by-value.
+
+``immutable``                   ``Pair{Int,Int}``               "Immutable" :: A type with all fields defined to be
+                                                                constant. It is defined by-value. And may be stored
+                                                                with a type-tag.
+
+                                ``Complex128`` (``isbits``)     "Is-Bits" :: A ``bitstype``, or an ``immutable`` type
+                                                                where all fields are other ``isbits`` types. It is
+                                                                defined by-value, and is stored without a type-tag.
+
+``type ...; end``               ``nothing``                     "Singleton" :: a Leaf Type or Immutable with no fields.
+
+``(...)`` or ``tuple(...)```    ``(1,2,3)``                     "Tuple" :: an immutable data-structure similar to an
+                                                                anonymous immutable type, or a constant array.
+                                                                Represented as either an array or a struct.
+
+``typealias``                   Not applicable here             Type aliases, and other similar mechanisms of
+                                                                doing type indirection, are resolved to their base
+                                                                type (this includes assigning a type to another name,
+                                                                or getting the type out of a function call).
+==============================  ==============================  ======================================================
+
+Bits Types:
+~~~~~~~~~~~
+
+There are several special types to be aware of, as no other type can be defined to behave the same:
+
+``Float32``
+    Exactly corresponds to the ``float`` type in C (or ``REAL*4`` in Fortran).
+
+``Float64``
+    Exactly corresponds to the ``double`` type in C (or ``REAL*8`` in Fortran).
+
+``Complex64``
+    Exactly corresponds to the ``complex float`` type in C (or ``COMPLEX*8`` in Fortran).
+
+``Complex128``
+    Exactly corresponds to the ``complex double`` type in C (or ``COMPLEX*16`` in Fortran).
+
+``Signed``
+    Exactly corresponds to the ``signed`` type annotation in C (or any ``INTEGER`` type in Fortran). Any Julia type that is not a subtype of ``Signed`` is assumed to be unsigned.
+
+``Ref{T}``
+    Behaves like a ``Ptr{T}`` that owns its memory.
+
+``Array{T,N}``
+    When an array is passed to C as a ``Ptr{T}`` argument, it is
+    not reinterpret-cast: Julia requires that the element type of the
+    array matches ``T``, and the address of the first element is passed.
+
+    Therefore, if an ``Array`` contains data in the wrong format, it will
+    have to be explicitly converted using a call such as ``trunc(Int32,a)``.
+
+    To pass an array ``A`` as a pointer of a different type *without*
+    converting the data beforehand (for example, to pass a ``Float64`` array
+    to a function that operates on uninterpreted bytes), you can
+    declare the argument as ``Ptr{Void}``.
+
+    If an array of eltype ``Ptr{T}`` is passed as a ``Ptr{Ptr{T}}`` argument,
+    :func:`Base.cconvert` will attempt to first make a null-terminated copy of the array with
+    each element replaced by its :func:`cconvert` version. This allows, for example, passing an ``argv``
+    pointer array of type ``Vector{String}`` to an argument of type ``Ptr{Ptr{Cchar}}``.
 
 基础的 C/C++ 类型和 Julia 类型对照如下。每个 C 类型也有一个对应名称的 Julia 类型，不过冠以了前缀 C 。这有助于编写简便的代码（但 C 中的 int 与 Julia 中的 Int 不同）。
 
 **与系统无关：**
 
-+------------------------+-------------------+--------------------------------+
-| ``unsigned char``      | ``Cuchar``        | ``Uint8``                      |
-+------------------------+-------------------+--------------------------------+
-| ``short``              | ``Cshort``        | ``Int16``                      |
-+------------------------+-------------------+--------------------------------+
-| ``unsigned short``     | ``Cushort``       | ``Uint16``                     |
-+------------------------+-------------------+--------------------------------+
-| ``int``                | ``Cint``          | ``Int32``                      |
-+------------------------+-------------------+--------------------------------+
-| ``unsigned int``       | ``Cuint``         | ``Uint32``                     |
-+------------------------+-------------------+--------------------------------+
-| ``long long``          | ``Clonglong``     | ``Int64``                      |
-+------------------------+-------------------+--------------------------------+
-| ``unsigned long long`` | ``Culonglong``    | ``Uint64``                     |
-+------------------------+-------------------+--------------------------------+
-| ``intmax_t``           | ``Cintmax_t``     | ``Int64``                      |
-+------------------------+-------------------+--------------------------------+
-| ``uintmax_t``          | ``Cuintmax_t``    | ``Uint64``                     |
-+------------------------+-------------------+--------------------------------+
-| ``float``              | ``Cfloat``        | ``Float32``                    |
-+------------------------+-------------------+--------------------------------+
-| ``double``             | ``Cdouble``       | ``Float64``                    |
-+------------------------+-------------------+--------------------------------+
-| ``ptrdiff_t``          | ``Cptrdiff_t``    | ``Int``                        |
-+------------------------+-------------------+--------------------------------+
-| ``ssize_t``            | ``Cssize_t``      | ``Int``                        |
-+------------------------+-------------------+--------------------------------+
-| ``size_t``             | ``Csize_t``       | ``Uint``                       |
-+------------------------+-------------------+--------------------------------+
-| ``void``               |                   | ``Void``                       |
-+------------------------+-------------------+--------------------------------+
-| ``void*``              |                   | ``Ptr{Void}``                  |
-+------------------------+-------------------+--------------------------------+
-| ``char*`` (or ``char[]``, e.g. a string)   | ``Ptr{Uint8}``                 |
-+------------------------+-------------------+--------------------------------+
-| ``char**`` (or ``*char[]``)                | ``Ptr{Ptr{Uint8}}``            |
-+------------------------+-------------------+--------------------------------+
-| ``struct T*`` (where T represents an       | ``Ptr{T}`` (call using         |
-| appropriately defined bits type)           | &variable_name in the          |
-|                                            | parameter list)                |
-+------------------------+-------------------+--------------------------------+
-| ``struct T`` (where T represents  an       | ``T`` (call using              |
-| appropriately defined bits type)           | &variable_name in the          |
-|                                            | parameter list)                |
-+------------------------+-------------------+--------------------------------+
-| ``jl_value_t*`` (any Julia Type)           | ``Ptr{Any}``                   |
-+------------------------+-------------------+--------------------------------+
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| C name                            | Fortran name    | Standard Julia Alias | Julia Base Type                   |
++===================================+=================+======================+===================================+
+| ``unsigned char``                 | ``CHARACTER``   | ``Cuchar``           | ``UInt8``                         |
+|                                   |                 |                      |                                   |
+| ``bool`` (C++)                    |                 |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``short``                         | ``INTEGER*2``   | ``Cshort``           | ``Int16``                         |
+|                                   |                 |                      |                                   |
+|                                   | ``LOGICAL*2``   |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``unsigned short``                |                 | ``Cushort``          | ``UInt16``                        |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``int``                           | ``INTEGER*4``   | ``Cint``             | ``Int32``                         |
+|                                   |                 |                      |                                   |
+| ``BOOL`` (C, typical)             | ``LOGICAL*4``   |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``unsigned int``                  |                 | ``Cuint``            | ``UInt32``                        |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``long long``                     | ``INTEGER*8``   | ``Clonglong``        | ``Int64``                         |
+|                                   |                 |                      |                                   |
+|                                   | ``LOGICAL*8``   |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``unsigned long long``            |                 | ``Culonglong``       | ``UInt64``                        |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``intmax_t``                      |                 | ``Cintmax_t``        | ``Int64``                         |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``uintmax_t``                     |                 | ``Cuintmax_t``       | ``UInt64``                        |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``float``                         | ``REAL*4i``     | ``Cfloat``           | ``Float32``                       |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``double``                        | ``REAL*8``      | ``Cdouble``          | ``Float64``                       |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``complex float``                 | ``COMPLEX*8``   | ``Complex64``        | ``Complex{Float32}``              |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``complex double``                | ``COMPLEX*16``  | ``Complex128``       | ``Complex{Float64}``              |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``ptrdiff_t``                     |                 | ``Cptrdiff_t``       | ``Int``                           |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``ssize_t``                       |                 | ``Cssize_t``         | ``Int``                           |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``size_t``                        |                 | ``Csize_t``          | ``UInt``                          |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``void``                          |                 |                      | ``Void``                          |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``void`` and                      |                 |                      | ``Union{}``                       |
+| ``[[noreturn]]`` or ``_Noreturn`` |                 |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``void*``                         |                 |                      | ``Ptr{Void}``                     |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``T*`` (where T represents an     |                 |                      | ``Ref{T}``                        |
+| appropriately defined type)       |                 |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``char*``                         | ``CHARACTER*N`` |                      | ``Cstring`` if NUL-terminated, or |
+| (or ``char[]``, e.g. a string)    |                 |                      | ``Ptr{UInt8}`` if not             |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``char**`` (or ``*char[]``)       |                 |                      | ``Ptr{Ptr{UInt8}}``               |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``jl_value_t*``                   |                 |                      | ``Any``                           |
+| (any Julia Type)                  |                 |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``jl_value_t**``                  |                 |                      | ``Ref{Any}``                      |
+| (a reference to a Julia Type)     |                 |                      |                                   |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``va_arg``                        |                 |                      | Not supported                     |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
+| ``...``                           |                 |                      | ``T...`` (where ``T``             |
+| (variadic function specification) |                 |                      | is one of the above types,        |
+|                                   |                 |                      | variadic functions of different   |
+|                                   |                 |                      | argument types are not supported) |
++-----------------------------------+-----------------+----------------------+-----------------------------------+
 
-Julia 的 ``Char`` 类型是 32 位的，与所有平台的宽字符类型 (``wchar_t`` 或 ``wint_t``) 不同。
-
-返回 ``void`` 的 C 函数，在 Julia 中返回 ``nothing`` 。
+The ``Cstring`` type is essentially a synonym for ``Ptr{UInt8}``, except the conversion to ``Cstring`` throws an
+error if the Julia string contains any embedded NUL characters (which would cause the string to be silently
+truncated if the C routine treats NUL as the terminator).  If you are passing a ``char*`` to a C routine that
+does not assume NUL termination (e.g. because you pass an explicit string length), or if you know for certain that
+your Julia string does not contain NUL and want to skip the check, you can use ``Ptr{UInt8}`` as the argument type.
+``Cstring`` can also be used as the :func:`ccall` return type, but in that case it obviously does not introduce any extra
+checks and is only meant to improve readability of the call.
 
 **与系统有关：**
 
