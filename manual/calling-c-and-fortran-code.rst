@@ -462,7 +462,7 @@ SIMD 类型
 
 内存分配与释放必须由合适的方法来处理. 在 Julia 里， 不要试图用 ``Libc.free`` 来释放由 C 分配的内存, 这会导致错误的 ``free`` 函数被调用而且会使 Julia 崩溃. 反过来也一样.
 
-何时改用 T, Ptr{T} 和 Ref{T}
+何时该用 T, Ptr{T} 和 Ref{T}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 Julia 里调用 C 程式, 在 :func:`ccall` 里普通的参数 (非指针)
@@ -479,7 +479,7 @@ SIMD 类型
 ``ccall``/``cfunction`` 输入参数类型参考
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-将 C 参数列表对应到 Julia:
+将 C 输入参数类型对应到 Julia:
 
 * ``T``, 这里 ``T`` 是:
   ``char``, ``int``, ``long``, ``short``, ``float``, ``double``, ``complex``, ``enum`` 或它们的 ``typedef`` 等价类型
@@ -532,7 +532,7 @@ SIMD 类型
 ``ccall``/``cfunction`` 返回类型参考
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For translating a C return type to Julia:
+将 C 返回类型对应到 Julia:
 
 * ``void``
 
@@ -605,15 +605,12 @@ Julia 会自动传递一个 C 指针到被这个值::
     
 在返回时， ``width`` 和 ``range`` 会被 ``width[]`` and ``range[]`` 接收。
 
-Special Reference Syntax for ccall (deprecated):
+引用前缀 ``&`` (已弃用):
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The ``&`` syntax is deprecated, use the ``Ref{T}`` argument type instead.
+``&`` 已经弃用, 请使用 ``Ref{T}`` 。
 
-A prefix ``&`` is used on an argument to :func:`ccall` to indicate that a pointer
-to a scalar argument should be passed instead of the scalar value itself
-(required for all Fortran function arguments, as noted above). The following
-example computes a dot product using a BLAS function.
+``&`` 前缀说明传递的是指向标量参数的指针，而不是标量值本身。下例使用 BLAS 函数计算点积：
 
 ::
 
@@ -621,23 +618,16 @@ example computes a dot product using a BLAS function.
       assert(length(DX) == length(DY))
       n = length(DX)
       incx = incy = 1
-      product = ccall((:ddot_, "libLAPACK"),
+      product = ccall( (:ddot_, "libLAPACK"),
                       Float64,
                       (Ptr{Int32}, Ptr{Float64}, Ptr{Int32}, Ptr{Float64}, Ptr{Int32}),
                       &n, DX, &incx, DY, &incy)
       return product
     end
 
-The meaning of prefix ``&`` is not quite the same as in C. In
-particular, any changes to the referenced variables will not be
-visible in Julia unless the type is mutable (declared via
-``type``). However, even for immutable types it will not cause any
-harm for called functions to attempt such modifications (that is,
-writing through the passed pointers). Moreover, ``&`` may be used with
-any expression, such as ``&0`` or ``&f(x)``.
+前缀 ``&`` 的意思与 C 中的不同。对引用的变量的任何更改，都是对 Julia 不可见的。 ``&`` 并不是真正的地址运算符，可以在任何语法中使用它，例如 ``&0`` 和 ``&f(x)`` 。
 
-When a scalar value is passed with ``&`` as an argument of type
-``Ptr{T}``, the value will first be converted to type ``T``.
+当数值参数和 ``&`` 一起被当作 ``Ptr{T}`` 传递时 , 它先会被转换为 ``T`` 类型。
 
 
 Some Examples of C Wrappers
@@ -786,7 +776,7 @@ exception.
 
 .. _LLVM Language Reference: http://llvm.org/docs/LangRef.html#calling-conventions
 
-Accessing Global Variables
+访问全局变量
 --------------------------
 
 Global variables exported by native libraries can be accessed by name using the
@@ -801,58 +791,27 @@ The result is a pointer giving the address of the value. The value can be
 manipulated through this pointer using :func:`unsafe_load` and :func:`unsafe_store!`.
 
 
-Accessing Data through a Pointer
---------------------------------
-The following methods are described as "unsafe" because a bad pointer
-or type declaration can cause Julia to terminate abruptly.
+通过指针读取数据
+----------------
 
-Given a ``Ptr{T}``, the contents of type ``T`` can generally be copied from
-the referenced memory into a Julia object using ``unsafe_load(ptr, [index])``.
-The index argument is optional (default is 1),
-and follows the Julia-convention of 1-based indexing.
-This function is intentionally similar to the behavior of :func:`getindex` and :func:`setindex!`
-(e.g. ``[]`` access syntax).
+下列方法是“不安全”的，因为坏指针或类型声明可能会导致意外终止或损坏任意进程内存。
 
-The return value will be a new object initialized
-to contain a copy of the contents of the referenced memory.
-The referenced memory can safely be freed or released.
+指定 ``Ptr{T}`` ，常使用 ``unsafe_ref(ptr, [index])`` 方法，将类型为 ``T`` 的内容从所引用的内存复制到 Julia 对象中。 ``index`` 参数是可选的（默认为 1 ），它是从 1 开始的索引值。此函数类似于 ``getindex()`` 和 ``setindex!()`` 的行为（如 ``[]`` 语法）。
 
-If ``T`` is ``Any``, then the memory is assumed to contain a reference to
-a Julia object (a ``jl_value_t*``), the result will be a reference to this object,
-and the object will not be copied. You must be careful in this case to ensure
-that the object was always visible to the garbage collector (pointers do not
-count, but the new reference does) to ensure the memory is not prematurely freed.
-Note that if the object was not originally allocated by Julia, the new object
-will never be finalized by Julia's garbage collector.  If the ``Ptr`` itself
-is actually a ``jl_value_t*``, it can be converted back to a Julia object
-reference by :func:`unsafe_pointer_to_objref(ptr) <unsafe_pointer_to_objref>`.
-(Julia values ``v`` can be converted to ``jl_value_t*`` pointers, as
-``Ptr{Void}``, by calling :func:`pointer_from_objref(v)
-<pointer_from_objref>`.)
+返回值是一个被初始化的新对象，它包含被引用内存内容的浅拷贝。被引用的内存可安全释放。
 
-The reverse operation (writing data to a ``Ptr{T}``), can be performed using
-:func:`unsafe_store!(ptr, value, [index]) <unsafe_store!>`.  Currently, this is only supported
-for bitstypes or other pointer-free (``isbits``) immutable types.
+如果 ``T`` 是 ``Any`` 类型，被引用的内存会被认为包含对 Julia 对象 ``jl_value_t*`` 的引用，结果为这个对象的引用，且此对象不会被拷贝。需要谨慎确保对象始终对垃圾回收机制可见（指针不重要，重要的是新的引用），来确保内存不会过早释放。注意，如果内存原本不是由 Julia 申请的，新对象将永远不会被 Julia 的垃圾回收机制释放。如果 ``Ptr`` 本身就是 ``jl_value_t*`` ，可使用 ``unsafe_pointer_to_objref(ptr)`` 将其转换回 Julia 对象引用。（可通过调用 ``pointer_from_objref(v)`` 将Julia 值 ``v`` 转换为 ``jl_value_t*`` 指针 ``Ptr{Void}``  。）
 
-Any operation that throws an error is probably currently unimplemented
-and should be posted as a bug so that it can be resolved.
+逆操作（向 Ptr{T} 写数据）可通过 ``unsafe_store!(ptr, value, [index])`` 来实现。目前，仅支持位类型和其它无指针（ ``isbits`` ）不可变类型。
 
-If the pointer of interest is a plain-data array (bitstype or immutable), the
-function :func:`unsafe_wrap(Array, ptr,dims,[own]) <unsafe_wrap>` may be
-more useful. The final parameter should be true if Julia should "take
-ownership" of the underlying buffer and call ``free(ptr)`` when the returned
-``Array`` object is finalized.  If the ``own`` parameter is omitted or false,
-the caller must ensure the buffer remains in existence until all access is
-complete.
+现在任何抛出异常的操作，估摸着都是还没实现完呢。来写个帖子上报 bug 吧，就会有人来解决啦。
 
-Arithmetic on the ``Ptr`` type in Julia (e.g. using ``+``) does not behave the
-same as C's pointer arithmetic. Adding an integer to a ``Ptr`` in Julia always
-moves the pointer by some number of *bytes*, not elements. This way, the
-address values obtained from pointer arithmetic do not depend on the
-element types of pointers.
+如果所关注的指针是（位类型或不可变）的目标数据数组， ``pointer_to_array(ptr,dims,[own])`` 函数就非常有用啦。如果想要 Julia “控制”底层缓冲区并在返回的 ``Array`` 被释放时调用 ``free(ptr)`` ，最后一个参数应该为真。如果省略 ``own`` 参数或它为假，则调用者需确保缓冲区一直存在，直至所有的读取都结束。
+
+``Ptr`` 的算术(比如 ``+``) 和 C 的指针算术不同， 对 ``Ptr`` 加一个整数会将指针移动一段距离的 *字节* ， 而不是元素。这样从指针运算上得到的地址不会依赖指针类型。
 
 
-Thread-safety
+线程安全
 -------------
 
 Some C libraries execute their callbacks from a different thread, and
@@ -872,7 +831,7 @@ taking care to avoid any allocations or other interactions with the Julia runtim
 Note that events may be coalesced, so multiple calls to uv_async_send
 may result in a single wakeup notification to the condition.
 
-More About Callbacks
+更多关于回调
 --------------------
 
 For more details on how to pass callbacks to C libraries, see this
