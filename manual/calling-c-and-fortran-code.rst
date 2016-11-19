@@ -82,14 +82,14 @@
 
 此例先分配出一个字节数组，然后调用 C 库函数 ``gethostname`` 向数组中填充主机名，取得指向主机名缓冲区的指针，在默认其为空结尾 C 字符串的前提下，将其转换为 Julia 字符串。 C 库函数一般都用这种方式从函数调用者那儿，将申请的内存传递给被调用者，然后填充。在 Julia 中分配内存，通常都需要通过构建非初始化数组，然后将指向数据的指针传递给 C 函数。
 
-创建 C 兼容的 Julia 函数指针
+创建与 C 兼容的 Julia 函数指针
 ---------------------
 
 可以把 Julia 函数传递给本地的接受函数指针为输入的 C 函数。 比如， ::
 
     typedef returntype (*functiontype)(argumenttype,...)
    
-函数 :func:`cfunction` 会生成对应的 C 兼容的函数指针来调用 Julia 的库函数。
+函数 :func:`cfunction` 会生成对应的与 C 兼容的函数指针来调用 Julia 的库函数。
 
 :func:`cfunction` 的参数形式如下 :
 
@@ -311,7 +311,7 @@ Syntax / Keyword                Example                         Description
 |                                   |                 |                      | argument types are not supported) |
 +-----------------------------------+-----------------+----------------------+-----------------------------------+
 
-``Cstring`` 和 ``Ptr{UInt8}`` 等价 , 除了当 Julia 字符串包含任何嵌入的 NUL 时， 转换成 ``Cstring`` 时会抛出错误。  当你传递 ``char*`` 到 C 函数且字符串不以 NUL 结尾， 或者确定 Julia 字符串不包含 NUL 且希望跳过检查, 就可以把 ``Ptr{UInt8}`` 作为参数类型。
+``Cstring`` 和 ``Ptr{UInt8}`` 等价 , 除了当 Julia 字符串包含任何嵌入的 NUL 时， 转换成 ``Cstring`` 时会抛出错误。  当你传递 ``char*`` 到 C 程式且字符串不以 NUL 结尾， 或者确定 Julia 字符串不包含 NUL 且希望跳过检查, 就可以把 ``Ptr{UInt8}`` 作为参数类型。
 ``Cstring`` 可以作为 :func:`ccall` 的返回类型, 但这样做显然不会引入额外的检查， 只是增加可读性。
 
 **与系统有关：**
@@ -420,21 +420,18 @@ In the future, some of these restrictions may be reduced or eliminated.
 SIMD 类型
 ~~~~~~~~~~~
 
-Note: This feature is currently implemented on 64-bit x86
-and AArch64 platforms only.
+注意: 仅支持 64-bit x86 和 AArch64 平台.
 
-If a C/C++ routine has an argument or return value that is a native
-SIMD type, the corresponding Julia type is a homogeneous tuple
-of ``VecElement`` that naturally maps to the SIMD type.  Specifically:
+如果 C/C++ 程式输入或输出包含本地的 SIMD 类型, 其对应的 Julia 类型为
+元素为 ``VecElement`` 的多元组。 特别地:
 
-    - The tuple must be the same size as the SIMD type.
-      For example, a tuple representing an ``__m128`` on x86
-      must have a size of 16 bytes.
+    - 多元组和该 SIMD 类型具有相同大小.
+      比如, 代表 ``__m128`` 的多元组在 x86 上必须有 16 字节。
 
-    - The element type of the tuple must be an instance of ``VecElement{T}``
-      where ``T`` is a bitstype that is 1, 2, 4 or 8 bytes.
+    - 多元组的元素类型必须是 ``VecElement{T}`` 的实例，
+      这里 ``T`` 是位类型， 大小可以是 1, 2, 4 or 8 字节.
 
-For instance, consider this C routine that uses AVX intrinsics::
+举个例子, 下面的 C 程式用到了 AVX 内部函数::
 
     #include <immintrin.h>
 
@@ -443,7 +440,7 @@ For instance, consider this C routine that uses AVX intrinsics::
                                             _mm256_mul_ps(b, b)));
     }
 
-The following Julia code calls ``dist`` using ``ccall``::
+这一段 Julia 代码通过 ``ccall`` 调用了 ``dist`` ::
 
     typealias m256 NTuple{8,VecElement{Float32}}
 
@@ -456,33 +453,136 @@ The following Julia code calls ``dist`` using ``ccall``::
 
     println(call_dist(a,b))
 
-The host machine must have the requisite SIMD registers.  For example,
-the code above will not work on hosts without AVX support.
+主机需要必要的 SIMD 寄存器。 上面的代码仅对支持 AVX 的主机有效。
 
-通过指针读取数据
-----------------
+内存所有权
+~~~~~~~~~~~~~~~~
 
-下列方法是“不安全”的，因为坏指针或类型声明可能会导致意外终止或损坏任意进程内存。
+**malloc/free**
 
-指定 ``Ptr{T}`` ，常使用 ``unsafe_ref(ptr, [index])`` 方法，将类型为 ``T`` 的内容从所引用的内存复制到 Julia 对象中。 ``index`` 参数是可选的（默认为 1 ），它是从 1 开始的索引值。此函数类似于 ``getindex()`` 和 ``setindex!()`` 的行为（如 ``[]`` 语法）。
+内存分配与释放必须由合适的方法来处理. 在 Julia 里， 不要试图用 ``Libc.free`` 来释放由 C 分配的内存, 这会导致错误的 ``free`` 函数被调用而且会使 Julia 崩溃. 反过来也一样.
 
-返回值是一个被初始化的新对象，它包含被引用内存内容的浅拷贝。被引用的内存可安全释放。
+何时改用 T, Ptr{T} 和 Ref{T}
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-如果 ``T`` 是 ``Any`` 类型，被引用的内存会被认为包含对 Julia 对象 ``jl_value_t*`` 的引用，结果为这个对象的引用，且此对象不会被拷贝。需要谨慎确保对象始终对垃圾回收机制可见（指针不重要，重要的是新的引用），来确保内存不会过早释放。注意，如果内存原本不是由 Julia 申请的，新对象将永远不会被 Julia 的垃圾回收机制释放。如果 ``Ptr`` 本身就是 ``jl_value_t*`` ，可使用 ``unsafe_pointer_to_objref(ptr)`` 将其转换回 Julia 对象引用。（可通过调用 ``pointer_from_objref(v)`` 将Julia 值 ``v`` 转换为 ``jl_value_t*`` 指针 ``Ptr{Void}``  。）
+在 Julia 里调用 C 程式, 在 :func:`ccall` 里普通的参数 (非指针)
+应声明为 ``T`` , 因为它们按值传递。  对于接受指针的, 应当用 ``Ref{T}``, 内存可以被 Julia 或 C 通过隐式调用 :func:`cconvert` 来管理。
+相反, 由 C 函数返回的指针应为 ``Ptr{T}``, 表示它们的内存由 C 管理。  C 结构体里的指针应为对应的 Julia
+不可变类型里的 ``Ptr{T}`` 。
 
-逆操作（向 Ptr{T} 写数据）可通过 ``unsafe_store!(ptr, value, [index])`` 来实现。目前，仅支持位类型和其它无指针（ ``isbits`` ）不可变类型。
+在 Julia 调用 Fortran 程式, 所有输入都应是 ``Ref{T}``, 因为 Fortran 按引用传递。 Fortran 子程式返回类型为 ``Void`` ,
+或返回 ``T`` 如果 Fortran 程式返回 ``T`` 类型.
 
-现在任何抛出异常的操作，估摸着都是还没实现完呢。来写个帖子上报 bug 吧，就会有人来解决啦。
+将 C 函数映射到 Julia
+----------------------------
 
-如果所关注的指针是（位类型或不可变）的目标数据数组， ``pointer_to_array(ptr,dims,[own])`` 函数就非常有用啦。如果想要 Julia “控制”底层缓冲区并在返回的 ``Array`` 被释放时调用 ``free(ptr)`` ，最后一个参数应该为真。如果省略 ``own`` 参数或它为假，则调用者需确保缓冲区一直存在，直至所有的读取都结束。
+``ccall``/``cfunction`` 输入参数类型参考
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``Ptr`` 的算术(比如 ``+``) 和 C 的指针算术不同， 对 ``Ptr`` 加一个整数会将指针移动一段距离的 *字节* ， 而不是元素。这样从指针运算上得到的地址不会依赖指针类型。
+将 C 参数列表对应到 Julia:
 
-.. Arithmetic on the ``Ptr`` type in Julia (e.g. using ``+``) does not behave the
-.. same as C's pointer arithmetic. Adding an integer to a ``Ptr`` in Julia always
-.. moves the pointer by some number of *bytes*, not elements. This way, the
-.. address values obtained from pointer arithmetic do not depend on the
-.. element types of pointers.
+* ``T``, 这里 ``T`` 是:
+  ``char``, ``int``, ``long``, ``short``, ``float``, ``double``, ``complex``, ``enum`` 或它们的 ``typedef`` 等价类型
+
+  + ``T`` 为 Julia 的位类型 (如上表)
+  + 若``T`` 类型为 ``enum``, 其类型等价为 ``Cint`` 或 ``Cuint``
+  + 按值传递的参数
+
+* ``struct T`` (包含 typedef 的)
+
+  + ``T`` 为 Julia 的 leaf type
+  + 按值传递的参数
+ 
+* ``void*``
+
+  + depends on how this parameter is used, first translate this to the intended pointer type,
+    then determine the Julia equivalent using the remaining rules in this list
+  + this argument may be declared as ``Ptr{Void}``, if it really is just an unknown pointer
+
+* ``jl_value_t*``
+
+  + ``Any``
+  + argument value must be a valid Julia object
+  + currently unsupported by :func:`cfunction`
+
+* ``jl_value_t**``
+
+  + ``Ref{Any}``
+  + argument value must be a valid Julia object (or ``C_NULL``)
+  + currently unsupported by :func:`cfunction`
+
+* ``T*``
+
+  + ``Ref{T}``, where ``T`` is the Julia type corresponding to ``T``
+  + argument value will be copied if it is an ``isbits`` type
+    otherwise, the value must be a valid Julia object
+
+* ``(T*)(...)`` (e.g. a pointer to a function)
+
+  + ``Ptr{Void}`` (you may need to use :func:`cfunction` explicitly to create this pointer)
+
+* ``...`` (e.g. a vararg)
+
+  + ``T...``, where ``T`` is the Julia type
+
+* ``va_arg``
+
+  + not supported
+
+``ccall``/``cfunction`` 返回类型参考
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For translating a C return type to Julia:
+
+* ``void``
+
+  + ``Void`` (this will return the singleton instance ``nothing::Void``)
+
+* ``T``, where ``T`` is one of the primitive types:
+  ``char``, ``int``, ``long``, ``short``, ``float``, ``double``, ``complex``, ``enum``
+  or any of their ``typedef`` equivalents
+
+  + ``T``, where ``T`` is an equivalent Julia Bits Type (per the table above)
+  + if ``T`` is an ``enum``, the argument type should be equivalent to ``Cint`` or ``Cuint``
+  + argument value will be copied (returned by-value)
+
+* ``struct T`` (including typedef to a struct)
+
+  + ``T``, where ``T`` is a Julia Leaf Type
+  + argument value will be copied (returned by-value)
+
+* ``void*``
+
+  + depends on how this parameter is used, first translate this to the intended pointer type,
+    then determine the Julia equivalent using the remaining rules in this list
+  + this argument may be declared as ``Ptr{Void}``, if it really is just an unknown pointer
+
+* ``jl_value_t*``
+
+  + ``Any``
+  + argument value must be a valid Julia object
+
+* ``jl_value_t**``
+
+  + ``Ref{Any}``
+  + argument value must be a valid Julia object (or ``C_NULL``)
+
+* ``T*``
+
+  + If the memory is already owned by Julia, or is an ``isbits`` type, and is known to be non-null:
+
+    + ``Ref{T}``, where ``T`` is the Julia type corresponding to ``T``
+    + a return type of ``Ref{Any}`` is invalid, it should either be ``Any``
+      (corresponding to ``jl_value_t*``) or ``Ptr{Any}`` (corresponding to ``Ptr{Any}``)
+    + C **MUST NOT** modify the memory returned via ``Ref{T}`` if ``T`` is an ``isbits`` type
+
+  + If the memory is owned by C:
+
+    + ``Ptr{T}``, where ``T`` is the Julia type corresponding to ``T``
+
+* ``(T*)(...)`` (e.g. a pointer to a function)
+
+  + ``Ptr{Void}`` (you may need to use :func:`cfunction` explicitly to create this pointer)
 
 用指针传递修改值
 -------------------------------------
@@ -502,12 +602,153 @@ Julia 会自动传递一个 C 指针到被这个值::
     width = Cint[0]
     range = Cfloat[0]
     ccall(:foo, Void, (Ptr{Cint}, Ptr{Cfloat}), width, range)
+    
+在返回时， ``width`` 和 ``range`` 会被 ``width[]`` and ``range[]`` 接收。
 
-这被广泛用在了 Julia 的 LAPACK 接口上， 其中整数类型的 ``info`` 被以引用的方式传到 LAPACK， 再返回是否成功。
+Special Reference Syntax for ccall (deprecated):
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. readproof
-.. This is used extensively in Julia's LAPACK interface, where an integer ``info``
-.. is passed to LAPACK by reference, and on return, includes the success code.
+The ``&`` syntax is deprecated, use the ``Ref{T}`` argument type instead.
+
+A prefix ``&`` is used on an argument to :func:`ccall` to indicate that a pointer
+to a scalar argument should be passed instead of the scalar value itself
+(required for all Fortran function arguments, as noted above). The following
+example computes a dot product using a BLAS function.
+
+::
+
+    function compute_dot(DX::Vector{Float64}, DY::Vector{Float64})
+      assert(length(DX) == length(DY))
+      n = length(DX)
+      incx = incy = 1
+      product = ccall((:ddot_, "libLAPACK"),
+                      Float64,
+                      (Ptr{Int32}, Ptr{Float64}, Ptr{Int32}, Ptr{Float64}, Ptr{Int32}),
+                      &n, DX, &incx, DY, &incy)
+      return product
+    end
+
+The meaning of prefix ``&`` is not quite the same as in C. In
+particular, any changes to the referenced variables will not be
+visible in Julia unless the type is mutable (declared via
+``type``). However, even for immutable types it will not cause any
+harm for called functions to attempt such modifications (that is,
+writing through the passed pointers). Moreover, ``&`` may be used with
+any expression, such as ``&0`` or ``&f(x)``.
+
+When a scalar value is passed with ``&`` as an argument of type
+``Ptr{T}``, the value will first be converted to type ``T``.
+
+
+Some Examples of C Wrappers
+---------------------------
+
+Here is a simple example of a C wrapper that returns a ``Ptr`` type::
+
+    type gsl_permutation
+    end
+
+    # The corresponding C signature is
+    #     gsl_permutation * gsl_permutation_alloc (size_t n);
+    function permutation_alloc(n::Integer)
+        output_ptr = ccall(
+            (:gsl_permutation_alloc, :libgsl), #name of C function and library
+            Ptr{gsl_permutation},              #output type
+            (Csize_t,),                        #tuple of input types
+            n                                  #name of Julia variable to pass in
+        )
+        if output_ptr==C_NULL # Could not allocate memory
+            throw(OutOfMemoryError())
+        end
+        return output_ptr
+    end
+
+The `GNU Scientific Library <https://www.gnu.org/software/gsl/>`_ (here assumed
+to be accessible through ``:libgsl``) defines an opaque pointer,
+``gsl_permutation *``, as the return type of the C function
+``gsl_permutation_alloc()``. As user code never has to look inside the
+``gsl_permutation`` struct, the corresponding Julia wrapper simply needs a new
+type declaration, ``gsl_permutation``, that has no internal fields and whose
+sole purpose is to be placed in the type parameter of a ``Ptr`` type.  The
+return type of the :func:`ccall` is declared as ``Ptr{gsl_permutation}``, since the
+memory allocated and pointed to by ``output_ptr`` is controlled by C (and not
+Julia).
+
+The input ``n`` is passed by value, and so the function's input signature is
+simply declared as ``(Csize_t,)`` without any ``Ref`` or ``Ptr`` necessary.
+(If the wrapper was calling a Fortran function instead, the corresponding
+function input signature should instead be ``(Ref{Csize_t},)``, since Fortran
+variables are passed by reference.) Furthermore, ``n`` can be any type that is
+convertable to a ``Csize_t`` integer; the :func:`ccall` implicitly calls
+:func:`Base.cconvert(Csize_t, n) <cconvert>`.
+
+
+Here is a second example wrapping the corresponding destructor::
+
+    # The corresponding C signature is
+    #     void gsl_permutation_free (gsl_permutation * p);
+    function permutation_free(p::Ref{gsl_permutation})
+        ccall(
+            (:gsl_permutation_free, :libgsl), #name of C function and library
+            Void,                             #output type
+            (Ref{gsl_permutation},),          #tuple of input types
+            p                                 #name of Julia variable to pass in
+        )
+    end
+
+Here, the input ``p`` is declared to be of type ``Ref{gsl_permutation}``,
+meaning that the memory that ``p`` points to may be managed by Julia or by C.
+A pointer to memory allocated by C should be of type ``Ptr{gsl_permutation}``,
+but it is convertable using :func:`cconvert` and therefore can be used in the
+same (covariant) context of the input argument to a :func:`ccall`. A pointer to
+memory allocated by Julia must be of type ``Ref{gsl_permutation}``, to ensure
+that the memory address pointed to is valid and that Julia's garbage collector
+manages the chunk of memory pointed to correctly. Therefore, the
+``Ref{gsl_permutation}`` declaration allows pointers managed by C or Julia to
+be used.
+
+If the C wrapper never expects the user to pass pointers to memory managed by
+Julia, then using ``p::Ptr{gsl_permutation}`` for the method signature of the
+wrapper and similarly in the :func:`ccall` is also acceptable.
+
+
+Here is a third example passing Julia arrays::
+
+    # The corresponding C signature is
+    #    int gsl_sf_bessel_Jn_array (int nmin, int nmax, double x,
+    #                                double result_array[])
+    function sf_bessel_Jn_array(nmin::Integer, nmax::Integer, x::Real)
+        if nmax<nmin throw(DomainError()) end
+        result_array = Array{Cdouble}(nmax-nmin+1)
+        errorcode = ccall(
+            (:gsl_sf_bessel_Jn_array, :libgsl), #name of C function and library
+            Cint,                               #output type
+            (Cint, Cint, Cdouble, Ref{Cdouble}),#tuple of input types
+            nmin, nmax, x, result_array         #names of Julia variables to pass in
+        )
+        if errorcode!= 0 error("GSL error code $errorcode") end
+        return result_array
+    end
+
+The C function wrapped returns an integer error code; the results of the actual
+evaluation of the Bessel J function populate the Julia array ``result_array``.
+This variable can only be used with corresponding input type declaration
+``Ref{Cdouble}``, since its memory is allocated and managed by
+Julia, not C. The implicit call to :func:`Base.cconvert(Ref{Cdouble},
+result_array) <cconvert>` unpacks the Julia pointer to a Julia array data
+structure into a form understandable by C.
+
+Note that for this code to work correctly, ``result_array`` must be declared to
+be of type ``Ref{Cdouble}`` and not ``Ptr{Cdouble}``. The memory is managed by
+Julia and the ``Ref`` signature alerts Julia's garbage collector to keep
+managing the memory for ``result_array`` while the :func:`ccall` executes. If
+``Ptr{Cdouble}`` were used instead, the :func:`ccall` may still work, but
+Julia's garbage collector would not be aware that the memory declared for
+``result_array`` is being used by the external C function. As a result, the
+code may produce a memory leak if ``result_array`` never gets freed by the
+garbage collector, or if the garbage collector prematurely frees
+``result_array``, the C function may end up throwing an invalid memory access
+exception.
 
 垃圾回收机制的安全
 ------------------
@@ -549,113 +790,96 @@ Accessing Global Variables
 --------------------------
 
 Global variables exported by native libraries can be accessed by name using the
-``cglobal`` function. The arguments to ``cglobal`` are a symbol specification
-identical to that used by ``ccall``, and a type describing the value stored in
+:func:`cglobal` function. The arguments to :func:`cglobal` are a symbol specification
+identical to that used by :func:`ccall`, and a type describing the value stored in
 the variable::
 
     julia> cglobal((:errno,:libc), Int32)
     Ptr{Int32} @0x00007f418d0816b8
 
 The result is a pointer giving the address of the value. The value can be
-manipulated through this pointer using ``unsafe_load`` and ``unsafe_store``.
+manipulated through this pointer using :func:`unsafe_load` and :func:`unsafe_store!`.
 
-Passing Julia Callback Functions to C
--------------------------------------
 
-It is possible to pass Julia functions to native functions that accept function
-pointer arguments. A classic example is the standard C library ``qsort`` function,
-declared as::
+Accessing Data through a Pointer
+--------------------------------
+The following methods are described as "unsafe" because a bad pointer
+or type declaration can cause Julia to terminate abruptly.
 
-    void qsort(void *base, size_t nmemb, size_t size,
-               int(*compare)(const void *a, const void *b));
+Given a ``Ptr{T}``, the contents of type ``T`` can generally be copied from
+the referenced memory into a Julia object using ``unsafe_load(ptr, [index])``.
+The index argument is optional (default is 1),
+and follows the Julia-convention of 1-based indexing.
+This function is intentionally similar to the behavior of :func:`getindex` and :func:`setindex!`
+(e.g. ``[]`` access syntax).
 
-The ``base`` argument is a pointer to an array of length ``nmemb``, with elements of
-``size`` bytes each. ``compare`` is a callback function which takes pointers to two
-elements ``a`` and ``b`` and returns an integer less/greater than zero if ``a`` should
-appear before/after ``b`` (or zero if any order is permitted). Now, suppose that we
-have a 1d array ``A`` of values in Julia that we want to sort using the ``qsort``
-function (rather than Julia’s built-in sort function). Before we worry about calling
-``qsort`` and passing arguments, we need to write a comparison function that works for
-some arbitrary type T::
+The return value will be a new object initialized
+to contain a copy of the contents of the referenced memory.
+The referenced memory can safely be freed or released.
 
-    function mycompare{T}(a_::Ptr{T}, b_::Ptr{T})
-        a = unsafe_load(a_)
-        b = unsafe_load(b_)
-        return convert(Cint, a < b ? -1 : a > b ? +1 : 0)
-    end
+If ``T`` is ``Any``, then the memory is assumed to contain a reference to
+a Julia object (a ``jl_value_t*``), the result will be a reference to this object,
+and the object will not be copied. You must be careful in this case to ensure
+that the object was always visible to the garbage collector (pointers do not
+count, but the new reference does) to ensure the memory is not prematurely freed.
+Note that if the object was not originally allocated by Julia, the new object
+will never be finalized by Julia's garbage collector.  If the ``Ptr`` itself
+is actually a ``jl_value_t*``, it can be converted back to a Julia object
+reference by :func:`unsafe_pointer_to_objref(ptr) <unsafe_pointer_to_objref>`.
+(Julia values ``v`` can be converted to ``jl_value_t*`` pointers, as
+``Ptr{Void}``, by calling :func:`pointer_from_objref(v)
+<pointer_from_objref>`.)
 
-Notice that we have to be careful about the return type: ``qsort`` expects a function
-returning a C ``int``, so we must be sure to return ``Cint`` via a call to ``convert``.
+The reverse operation (writing data to a ``Ptr{T}``), can be performed using
+:func:`unsafe_store!(ptr, value, [index]) <unsafe_store!>`.  Currently, this is only supported
+for bitstypes or other pointer-free (``isbits``) immutable types.
 
-In order to pass this function to C, we obtain its address using the function
-``cfunction``::
+Any operation that throws an error is probably currently unimplemented
+and should be posted as a bug so that it can be resolved.
 
-    const mycompare_c = cfunction(mycompare, Cint, (Ptr{Cdouble}, Ptr{Cdouble}))
+If the pointer of interest is a plain-data array (bitstype or immutable), the
+function :func:`unsafe_wrap(Array, ptr,dims,[own]) <unsafe_wrap>` may be
+more useful. The final parameter should be true if Julia should "take
+ownership" of the underlying buffer and call ``free(ptr)`` when the returned
+``Array`` object is finalized.  If the ``own`` parameter is omitted or false,
+the caller must ensure the buffer remains in existence until all access is
+complete.
 
-``cfunction`` accepts three arguments: the Julia function (``mycompare``), the return
-type (``Cint``), and a tuple of the argument types, in this case to sort an array of
-``Cdouble`` (Float64) elements.
+Arithmetic on the ``Ptr`` type in Julia (e.g. using ``+``) does not behave the
+same as C's pointer arithmetic. Adding an integer to a ``Ptr`` in Julia always
+moves the pointer by some number of *bytes*, not elements. This way, the
+address values obtained from pointer arithmetic do not depend on the
+element types of pointers.
 
-The final call to ``qsort`` looks like this::
-
-    A = [1.3, -2.7, 4.4, 3.1]
-    ccall(:qsort, Void, (Ptr{Cdouble}, Csize_t, Csize_t, Ptr{Void}),
-          A, length(A), sizeof(eltype(A)), mycompare_c)
-
-After this executes, ``A`` is changed to the sorted array ``[ -2.7, 1.3, 3.1, 4.4]``.
-Note that Julia knows how to convert an array into a ``Ptr{Cdouble}``, how to compute
-the size of a type in bytes (identical to C’s ``sizeof`` operator), and so on.
-For fun, try inserting a ``println("mycompare($a,$b)")`` line into ``mycompare``, which
-will allow you to see the comparisons that ``qsort`` is performing (and to verify that
-it is really calling the Julia function that you passed to it).
 
 Thread-safety
-~~~~~~~~~~~~~
+-------------
 
 Some C libraries execute their callbacks from a different thread, and
 since Julia isn't thread-safe you'll need to take some extra
 precautions. In particular, you'll need to set up a two-layered
 system: the C callback should only *schedule* (via Julia's event loop)
-the execution of your "real" callback. Your callback
-needs to be written to take two inputs (which you'll most likely just
-discard) and then wrapped by ``SingleAsyncWork``::
+the execution of your "real" callback.
+To do this, create a ``AsyncCondition`` object and wait on it::
 
-  cb = Base.SingleAsyncWork(data -> my_real_callback(args))
+  cond = Base.AsyncCondition()
+  wait(cond)
 
-The callback you pass to C should only execute a ``ccall`` to
-``:uv_async_send``, passing ``cb.handle`` as the argument.
+The callback you pass to C should only execute a :func:`ccall` to
+``:uv_async_send``, passing ``cb.handle`` as the argument,
+taking care to avoid any allocations or other interactions with the Julia runtime.
+
+Note that events may be coalesced, so multiple calls to uv_async_send
+may result in a single wakeup notification to the condition.
 
 More About Callbacks
-~~~~~~~~~~~~~~~~~~~~
+--------------------
 
 For more details on how to pass callbacks to C libraries, see this
-`blog post <http://julialang.org/blog/2013/05/callback/>`_.
+`blog post <http://julialang.org/blog/2013/05/callback>`_.
 
 C++
 ---
 
-`Cpp <https://github.com/timholy/Cpp.jl>`_ 和 `Clang <https://github.com/ihnorton/Clang.jl>`_ 扩展包提供了有限的 C++ 支持。
-
-处理不同平台
-------------
-
-当处理不同的平台库的时候，经常要针对特殊平台提供特殊函数。这时常用到变量 ``OS_NAME`` 。此外，还有一些常用的宏： ``@windows``, ``@unix``, ``@linux``, 及 ``@osx`` 。注意， linux 和 osx 是 unix 的不相交的子集。宏的用法类似于三元条件运算符。
-
-简单的调用： ::
-
-    ccall( (@windows? :_fopen : :fopen), ...)
-
-复杂的调用： ::
-
-    @linux? (
-             begin
-                 some_complicated_thing(a)
-             end
-           : begin
-                 some_different_thing(a)
-             end
-           )
-
-链式调用（圆括号可以省略，但为了可读性，最好加上）： ::
-
-    @windows? :a : (@osx? :b : :c)
+Limited support for C++ is provided by the `Cpp <https://github.com/timholy/Cpp.jl>`_,
+`Clang <https://github.com/ihnorton/Clang.jl>`_, and `Cxx <https://github.com/Keno/Cxx.jl>`_ packages.
