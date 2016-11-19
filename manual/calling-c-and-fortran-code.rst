@@ -19,10 +19,10 @@
 
 1. (:function, "library") 多元组对儿（必须为常量，详见下面）。
 2. 返回类型 (参见下面的表格对应 声明的 C 类型到 Julia)
-    - 这个参数会在编译时被处理。
-3. 输入的类型的多元组，与上述的返回类型的要求类似。 输入必须是多元组，而不是值为多元组的变量或表达式。
-    - 这个参数会在编译是被处理。
-4. 后面的参数，如果有的话，都是被调用函数的实参
+  - 这个参数会在编译时被处理。
+3. 输入的类型的多元组， 与上述的返回类型的要求类似。 输入必须是多元组，而不是值为多元组的变量或表达式。
+  - 这个参数会在编译是被处理。
+4. 后面的参数， 如果有的话，都是被调用函数的实参。
 
 下例调用标准 C 库中的 ``clock`` ： ::
 
@@ -150,11 +150,11 @@ Julia 自动调用 ``convert`` 函数，将参数转换为指定类型。例如�
 :func:`cconvert` 会正常调用 :func:`convert`, 但也可以被定义返回更合适的类型来传递给 C. 例如， 
 将一个数组 (比如字符串数组) 转换为指针数组。
 
-:func:`unsafe_convert` 处理转换为 ``Ptr`` 类型的情况. 它被称作不安全因为将对象转换为指针后会对垃圾回收隐藏起来， 导致过早地被释放。
+:func:`unsafe_convert` 处理转换为 ``Ptr`` 类型的情况. 它被称作不安全是因为将对象转换为指针后对垃圾回收不可见， 会导致过早地被释放。
 
-类型对应
+类型的对应
 ~~~~~~~~
-First, a review of some relevant Julia type terminology:
+先看一看 Julia 的相关类型术语:
 
 .. rst-class:: text-wrap
 
@@ -201,46 +201,39 @@ Syntax / Keyword                Example                         Description
                                                                 or getting the type out of a function call).
 ==============================  ==============================  ======================================================
 
-Bits Types:
+位类型:
 ~~~~~~~~~~~
 
-There are several special types to be aware of, as no other type can be defined to behave the same:
+特殊的类型:
 
 ``Float32``
-    Exactly corresponds to the ``float`` type in C (or ``REAL*4`` in Fortran).
+    对应 C 的 ``float`` (或 Fortran 的 ``REAL*4``).
 
 ``Float64``
-    Exactly corresponds to the ``double`` type in C (or ``REAL*8`` in Fortran).
+    对应 C 的 ``double`` (或 Fortran 的 ``REAL*8``).
 
 ``Complex64``
-    Exactly corresponds to the ``complex float`` type in C (or ``COMPLEX*8`` in Fortran).
+    对应 C 的 ``complex float`` (或 Fortran 的 ``COMPLEX*8``).
 
 ``Complex128``
-    Exactly corresponds to the ``complex double`` type in C (or ``COMPLEX*16`` in Fortran).
+    对应 C 的 ``complex double`` (或 Fortran 的 ``COMPLEX*16``).
 
 ``Signed``
-    Exactly corresponds to the ``signed`` type annotation in C (or any ``INTEGER`` type in Fortran). Any Julia type that is not a subtype of ``Signed`` is assumed to be unsigned.
+    对应 C 的 ``signed`` (或任何 Fortran 的 ``INTEGER`` 类型). Julia 里不是 ``Signed`` 的子类都被认为是无符号的.
 
 ``Ref{T}``
-    Behaves like a ``Ptr{T}`` that owns its memory.
+    行为类似 ``Ptr{T}`` 但拥有自己的内存.
 
 ``Array{T,N}``
-    When an array is passed to C as a ``Ptr{T}`` argument, it is
-    not reinterpret-cast: Julia requires that the element type of the
-    array matches ``T``, and the address of the first element is passed.
+    当数组被当作 ``Ptr{T}`` 传到 C 里的时候, 
+    并不是强制转换: Julia 需要元素类型是 ``T``, 然后地一个元素的地址将被传入。
 
-    Therefore, if an ``Array`` contains data in the wrong format, it will
-    have to be explicitly converted using a call such as ``trunc(Int32,a)``.
+    所以当一个 ``Array`` 包含错误格式的数据, 就必须用 ``trunc(Int32,a)`` 显式地转换。
 
-    To pass an array ``A`` as a pointer of a different type *without*
-    converting the data beforehand (for example, to pass a ``Float64`` array
-    to a function that operates on uninterpreted bytes), you can
-    declare the argument as ``Ptr{Void}``.
+    如果要把数组 ``A`` 当作另一个类型的指针来传递而不进行预先转换, 可以声明为 ``Ptr{Void}`` 类型。
 
-    If an array of eltype ``Ptr{T}`` is passed as a ``Ptr{Ptr{T}}`` argument,
-    :func:`Base.cconvert` will attempt to first make a null-terminated copy of the array with
-    each element replaced by its :func:`cconvert` version. This allows, for example, passing an ``argv``
-    pointer array of type ``Vector{String}`` to an argument of type ``Ptr{Ptr{Cchar}}``.
+    如果元素类型为 ``Ptr{T}`` 的数组被当作 ``Ptr{Ptr{T}}`` 传递,
+    :func:`Base.cconvert` 会首先拷贝该数组为一个空值结尾的数组， 其元素为原数组元素经 :func:`cconvert` 处理后的结果. 这将允许把 ``argv`` 指针数组类型 ``Vector{String}`` 传递为 ``Ptr{Ptr{Cchar}}`` 类型.
 
 基础的 C/C++ 类型和 Julia 类型对照如下。每个 C 类型也有一个对应名称的 Julia 类型，不过冠以了前缀 C 。这有助于编写简便的代码（但 C 中的 int 与 Julia 中的 Int 不同）。
 
@@ -318,13 +311,8 @@ There are several special types to be aware of, as no other type can be defined 
 |                                   |                 |                      | argument types are not supported) |
 +-----------------------------------+-----------------+----------------------+-----------------------------------+
 
-The ``Cstring`` type is essentially a synonym for ``Ptr{UInt8}``, except the conversion to ``Cstring`` throws an
-error if the Julia string contains any embedded NUL characters (which would cause the string to be silently
-truncated if the C routine treats NUL as the terminator).  If you are passing a ``char*`` to a C routine that
-does not assume NUL termination (e.g. because you pass an explicit string length), or if you know for certain that
-your Julia string does not contain NUL and want to skip the check, you can use ``Ptr{UInt8}`` as the argument type.
-``Cstring`` can also be used as the :func:`ccall` return type, but in that case it obviously does not introduce any extra
-checks and is only meant to improve readability of the call.
+``Cstring`` 和 ``Ptr{UInt8}`` 等价 , 除了当 Julia 字符串包含任何嵌入的 NUL 时， 转换成 ``Cstring`` 时会抛出错误。  当你传递 ``char*`` 到 C 函数且字符串不以 NUL 结尾， 或者确定 Julia 字符串不包含 NUL 且希望跳过检查, 就可以把 ``Ptr{UInt8}`` 作为参数类型。
+``Cstring`` 可以作为 :func:`ccall` 的返回类型, 但这样做显然不会引入额外的检查， 只是增加可读性。
 
 **与系统有关：**
 
@@ -343,6 +331,32 @@ checks and is only meant to improve readability of the call.
                                         ``Uint16`` (Windows)
 ======================  ==============  =======
 
+.. note::
+
+    调用 Fortran 函数时, 所有输入必须按引用传递, 所以所有类型都要加上 ``Ptr{..}`` 或者
+    ``Ref{..}``。
+
+.. warning::
+
+    字符串参数 (``char*``) 在 Julia 里类型必须是 ``Cstring`` (如果是 NUL 结尾的话) 或是 ``Ptr{Cchar}`` 与 ``Ptr{UInt8}`` 之一，
+    而不是 ``String``。 类似地, 数组参数 (``T[]`` 或 ``T*``), 其 Julia 类型必须是 ``Ptr{T}``, 而不是 ``Vector{T}``。
+
+.. warning::
+
+    Julia 里 ``Char`` 类型是 32 位, 和宽字符类型在所有平台上不同 (``wchar_t`` or ``wint_t``) 。
+
+.. warning::
+
+    返回类型为 ``Union{}`` 意味着函数将不会返回，
+    比如， C++11 ``[[noreturn]]`` 或 C11 ``_Noreturn`` (例如 ``jl_throw`` 或
+    ``longjmp``). 不要在返回空值的函数上使用。
+
+.. note::
+
+    对于 ``wchar_t*`` 参数, Julia 类型为 ``Cwstring`` (如果是 NUL 结尾的话) 或 ``Ptr{Cwchar_t}``。 注意有些 UTF-8 字符串在 Julia 里是 NUL 结尾的, 所以可以直接传递给需要 NUL 结尾字符串为参数的 C 函数里(但用 ``Cwstring`` 类型会抛出错误)。
+
+.. note::
+
 对应于字符串参数（ ``char*`` ）的 Julia 类型为 ``Ptr{Uint8}`` ，而不是 ``ASCIIString`` 。参数中有 ``char**`` 类型的 C 函数，在 Julia 中调用时应使用 ``Ptr{Ptr{Uint8}}`` 类型。例如，C 函数： ::
 
     int main(int argc, char **argv);
@@ -352,14 +366,98 @@ checks and is only meant to improve readability of the call.
     argv = [ "a.out", "arg1", "arg2" ]
     ccall(:main, Int32, (Int32, Ptr{Ptr{Uint8}}), length(argv), argv)
 
-For ``wchar_t*`` arguments, the Julia type should be ``Ptr{Wchar_t}``,
-and data can be converted to/from ordinary Julia strings by the
-``wstring(s)`` function (equivalent to either ``utf16(s)`` or ``utf32(s)``
-depending upon the width of ``Cwchar_t``.    Note also that ASCII, UTF-8,
-UTF-16, and UTF-32 string data in Julia is internally NUL-terminated, so
-it can be passed to C functions expecting NUL-terminated data without making
-a copy.
+.. note::
 
+    声明返回 ``Void`` 的 C 函数在 Julia 里会返回 ``nothing`` 。
+
+结构体类型的对应
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+复合类型， C 里的 ``struct`` 或 Fortran90 的 ``TYPE`` 
+(或 F77的一些变种里的 ``STRUCTURE`` / ``RECORD``),
+可以对应到 Julia 的 ``type`` 或 ``immutable``.
+
+When used recursively, ``isbits`` types are stored inline.
+All other types are stored as a pointer to the data.
+When mirroring a struct used by-value inside another struct in C,
+it is imperative that you do not attempt to manually copy the fields over,
+as this will not preserve the correct field alignment.
+Instead, declare an immutable ``isbits`` type and use that instead.
+Unnamed structs are not possible in the translation to Julia.
+
+Packed structs and union declarations are not supported by Julia.
+
+You can get a near approximation of a ``union`` if you know, a priori,
+the field that will have the greatest size (potentially including padding).
+When translating your fields to Julia, declare the Julia field to be only
+of that type.
+
+Arrays of parameters must be expanded manually, currently
+(either inline, or in an immutable helper type). For example::
+
+    in C:
+    struct B {
+        int A[3];
+    };
+    b_a_2 = B.A[2];
+
+    in Julia:
+    immutable B_A
+        A_1::Cint
+        A_2::Cint
+        A_3::Cint
+    end
+    type B
+        A::B_A
+    end
+    b_a_2 = B.A.(2)
+
+Arrays of unknown size are not supported.
+
+In the future, some of these restrictions may be reduced or eliminated.
+
+
+SIMD 类型
+~~~~~~~~~~~
+
+Note: This feature is currently implemented on 64-bit x86
+and AArch64 platforms only.
+
+If a C/C++ routine has an argument or return value that is a native
+SIMD type, the corresponding Julia type is a homogeneous tuple
+of ``VecElement`` that naturally maps to the SIMD type.  Specifically:
+
+    - The tuple must be the same size as the SIMD type.
+      For example, a tuple representing an ``__m128`` on x86
+      must have a size of 16 bytes.
+
+    - The element type of the tuple must be an instance of ``VecElement{T}``
+      where ``T`` is a bitstype that is 1, 2, 4 or 8 bytes.
+
+For instance, consider this C routine that uses AVX intrinsics::
+
+    #include <immintrin.h>
+
+    __m256 dist( __m256 a, __m256 b ) {
+        return _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(a, a),
+                                            _mm256_mul_ps(b, b)));
+    }
+
+The following Julia code calls ``dist`` using ``ccall``::
+
+    typealias m256 NTuple{8,VecElement{Float32}}
+
+    a = m256(ntuple(i->VecElement(sin(Float32(i))),8))
+    b = m256(ntuple(i->VecElement(cos(Float32(i))),8))
+
+    function call_dist(a::m256, b::m256)
+        ccall((:dist, "libdist"), m256, (m256, m256), a, b)
+    end
+
+    println(call_dist(a,b))
+
+The host machine must have the requisite SIMD registers.  For example,
+the code above will not work on hosts without AVX support.
 
 通过指针读取数据
 ----------------
